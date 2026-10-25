@@ -1,0 +1,13 @@
+test_missing_feature_is_rejected (test_features.FeatureValidationTests.test_missing_feature_is_rejected) ... ok
+test_non_finite_value_is_rejected (test_features.FeatureValidationTests.test_non_finite_value_is_rejected) ... ok
+test_out_of_range_cpu_is_rejected (test_features.FeatureValidationTests.test_out_of_range_cpu_is_rejected) ... ok
+test_valid_features_keep_stable_order (test_features.FeatureValidationTests.test_valid_features_keep_stable_order) ... ok
+test_high_risk_sample_flags_elevated (test_model_runtime.ModelRuntimeTests.test_high_risk_sample_flags_elevated) ... ok
+test_low_risk_sample_is_normal (test_model_runtime.ModelRuntimeTests.test_low_risk_sample_is_normal) ... ok
+test_model_version_is_returned (test_model_runtime.ModelRuntimeTests.test_model_version_is_returned) ... ok
+test_probability_is_bounded (test_model_runtime.ModelRuntimeTests.test_probability_is_bounded) ... ok
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.001s
+
+OK

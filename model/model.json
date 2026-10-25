@@ -1,0 +1,40 @@
+{
+  "model_version": "baseline-logreg-v1",
+  "algorithm": "scikit-learn LogisticRegression; standardized numeric features",
+  "feature_names": [
+    "cpu_mean",
+    "cpu_trend",
+    "memory_mean",
+    "error_rate",
+    "latency_p95_ms",
+    "restart_count"
+  ],
+  "scaler_mean": [
+    53.924958333333294,
+    1.3738416666666664,
+    56.952900000000035,
+    0.02129331666666668,
+    516.2296533333332,
+    0.9783333333333334
+  ],
+  "scaler_scale": [
+    23.304311474201445,
+    3.376310743488701,
+    21.374303671386972,
+    0.02978238099670767,
+    475.79702615020557,
+    1.3017413550915378
+  ],
+  "coefficients": [
+    1.518456329941556,
+    0.4122940381585283,
+    1.8368831960561547,
+    0.5999681622878424,
+    1.6817815135020304,
+    1.2977336990520316
+  ],
+  "intercept": -2.8590427221106944,
+  "risk_threshold": 0.65,
+  "training_rows": 600,
+  "data_note": "Synthetic course-project data; not validated production telemetry."
+}

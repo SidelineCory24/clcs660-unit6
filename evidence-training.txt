@@ -1,0 +1,2 @@
+Trained on 600 rows; model exported to /mnt/data/clcs660_predictive_maintenance/model/model.json
+Model is a prototype. Evaluate using held-out metrics before interpreting predictions.
