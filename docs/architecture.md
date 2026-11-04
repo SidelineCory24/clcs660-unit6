@@ -41,9 +41,42 @@ Values are illustrative synthetic examples. `cpu_mean` and `memory_mean` are per
 | Excessive alerting | Threshold, SNS subscription controls, CloudWatch monitoring |
 | Incorrect prediction | Alert-only operation, held-out testing, human review, documented limitations |
 | Credential exposure | IAM roles, no embedded keys, `.gitignore`, secret scanning |
-| Unintended network exposure | No inbound network listener; avoid VPC attachment unless required; document SG/endpoint design if VPC access is introduced |
+| Unintended network exposure | No inbound network listener; Lambda in private subnets with no internet route; security-group chain (Lambda SG to endpoint SG) and endpoint policies limit egress |
 | Cost or schedule abuse | Restrict invocation permissions, bound schedule frequency, monitor invocation/error metrics |
 
 ## Network design note
 
-The starter Lambda does not require VPC attachment because it calls AWS service APIs and does not connect to private application resources. This avoids adding NAT and endpoint costs. Security-group chaining is not applicable to this no-VPC baseline. If the instructor requires an explicit security-group-chain demonstration, add a documented VPC variant with a Lambda security group referencing a private endpoint/application security group and appropriate VPC endpoints; do not claim this is implemented by the baseline template.
+The original design used a no-VPC Lambda to avoid networking costs, which left security-group chaining unimplemented. The updated infrastructure template is designed to run the Lambda in a private-only VPC so the chain is real and demonstrable, without adding an EC2 instance or database. It has not been deployed yet.
+
+- **Subnets:** two private subnets in two Availability Zones, one shared route table. No internet gateway and no NAT gateway.
+- **Lambda security group:** no inbound rules. Egress is TCP 443 to the endpoint security group, plus TCP 443 to the AWS-managed S3 prefix list.
+- **Endpoint security group:** attached to the SNS interface endpoint. Its only inbound rule is TCP 443 with the *source set to the Lambda security group* (a security group reference, not a CIDR). It has no outbound rules.
+- **S3 gateway endpoint:** private S3 access with no hourly charge. Gateway endpoints have no security group, so the Lambda egress rule to S3 uses the S3 managed prefix list (`S3PrefixListId` parameter).
+- **Endpoint policies:** each endpoint allows only the actions and resources the function needs, and only for the function's execution role.
+- **Default egress removed:** both security groups carry a loopback placeholder rule so the default allow-all egress rule is not created.
+
+### Logging and tracing
+
+- Lambda's stdout logs are delivered by the Lambda service outside the customer VPC, so no CloudWatch Logs endpoint is deployed. Add one only if code in the VPC calls the Logs API directly.
+- The template creates the function's log group explicitly with 14-day retention, and the execution role may write only to that log group.
+- Active X-Ray tracing is disabled; it would need `xray:PutTraceSegments` on the role and an X-Ray endpoint.
+
+### Finding the S3 prefix list ID
+
+```bash
+aws ec2 describe-managed-prefix-lists \
+  --region <region> \
+  --filters Name=prefix-list-name,Values=com.amazonaws.<region>.s3 \
+  --query 'PrefixLists[0].PrefixListId' \
+  --output text
+```
+
+Pass the returned `pl-...` value as the `S3PrefixListId` parameter at deploy time.
+
+### Cost note
+
+The SNS interface endpoint bills per AZ-hour plus per GB processed. One interface endpoint across two AZs is two endpoint network interfaces; at roughly $0.01 per hour each (verify current regional pricing) that is on the order of $15/month while deployed, plus data processing. The S3 gateway endpoint is free. Delete the stack when the demo evidence is captured.
+
+### AWS Config
+
+AWS Config allows one configuration recorder and one delivery channel per account per Region, and this template creates both. Before deploying, check whether the account already has them (`aws configservice describe-configuration-recorders` and `describe-delivery-channels`); if it does, the Config resources must be removed or made conditional so the deployment does not fail or conflict with centrally managed Config.

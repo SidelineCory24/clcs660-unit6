@@ -12,7 +12,7 @@ Save sanitized screenshots and command outputs under a local `evidence/` directo
 8. `08-config-status.png` — AWS Config recorder and rule evaluation.
 9. `09-lambda-cloudwatch.png` — successful invocation and logs.
 10. `10-sns-alert.png` — notification evidence with personal details redacted.
-11. `11-network-controls.png` — network/SG chain evidence if the VPC variant is actually deployed; otherwise explain the baseline's no-VPC decision.
+11. `11-network-controls.png` — network/SG chain evidence: Lambda SG egress, endpoint SG inbound rule referencing the Lambda SG, private route table, and endpoint policies.
 12. `12-cleanup.txt` — resources deleted or retained and cost-control notes.
 
 Never include AWS access keys, secret keys, session tokens, private keys, or sensitive account data.

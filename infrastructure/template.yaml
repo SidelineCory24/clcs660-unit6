@@ -16,15 +16,200 @@ Parameters:
     MinValue: 0.1
     MaxValue: 0.99
     Description: Document and validate the chosen threshold using held-out data.
+  S3PrefixListId:
+    Type: String
+    AllowedPattern: '^pl-[0-9a-f]+$'
+    Description: >-
+      AWS-managed prefix list for S3 in the deployment region, used for the Lambda security group's
+      S3 egress rule (gateway endpoints are reached by prefix list, not by security group). Find it with:
+      aws ec2 describe-managed-prefix-lists --region <region>
+      --filters Name=prefix-list-name,Values=com.amazonaws.<region>.s3
+      --query 'PrefixLists[0].PrefixListId' --output text
 
 Globals:
   Function:
     Runtime: python3.12
     Timeout: 20
     MemorySize: 256
-    Tracing: Active
+    # Active X-Ray tracing is intentionally off: it needs xray:PutTraceSegments on the role
+    # and an X-Ray endpoint in this private VPC.
+    Tracing: PassThrough
 
 Resources:
+  # ---------------------------------------------------------------------------
+  # Network: private-only VPC (no internet gateway, no NAT gateway). Lambda reaches
+  # AWS APIs through VPC endpoints. Security-group chain:
+  #   LambdaSecurityGroup --(egress 443)--> EndpointSecurityGroup
+  #   EndpointSecurityGroup <--(ingress 443, source = LambdaSecurityGroup)-- Lambda
+  # Rules are separate resources so the two groups can reference each other without
+  # a circular dependency.
+  # ---------------------------------------------------------------------------
+  PrivateVpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.60.0.0/24
+      EnableDnsSupport: true
+      EnableDnsHostnames: true # required for interface endpoint private DNS
+      Tags:
+        - Key: Name
+          Value: clcs660-private-vpc
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref PrivateVpc
+      CidrBlock: 10.60.0.0/26
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: clcs660-private-a
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref PrivateVpc
+      CidrBlock: 10.60.0.64/26
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: clcs660-private-b
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref PrivateVpc
+      Tags:
+        - Key: Name
+          Value: clcs660-private-rt
+
+  PrivateSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Predictive maintenance Lambda ENIs (no inbound; HTTPS out to endpoints only)
+      VpcId: !Ref PrivateVpc
+      # Specifying any egress rule replaces the default allow-all egress. Real rules are
+      # the separate Egress resources below; this loopback rule only suppresses the default.
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: 127.0.0.1/32
+          Description: Placeholder to remove default allow-all egress
+      Tags:
+        - Key: Name
+          Value: clcs660-lambda-sg
+
+  EndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Interface VPC endpoint for SNS (HTTPS in from Lambda SG only)
+      VpcId: !Ref PrivateVpc
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: 127.0.0.1/32
+          Description: Placeholder to remove default allow-all egress (endpoints initiate no connections)
+      Tags:
+        - Key: Name
+          Value: clcs660-endpoint-sg
+
+  EndpointIngressFromLambda:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EndpointSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId: !Ref LambdaSecurityGroup
+      Description: HTTPS from the Lambda security group only
+
+  LambdaEgressToEndpoints:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref LambdaSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      DestinationSecurityGroupId: !Ref EndpointSecurityGroup
+      Description: HTTPS to the interface endpoint security group only
+
+  LambdaEgressToS3:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref LambdaSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      DestinationPrefixListId: !Ref S3PrefixListId
+      Description: HTTPS to S3 via the gateway endpoint (prefix list; gateway endpoints have no security group)
+
+  S3GatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Gateway
+      VpcId: !Ref PrivateVpc
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      RouteTableIds:
+        - !Ref PrivateRouteTable
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: TelemetryObjectsFromFunctionRoleOnly
+            Effect: Allow
+            Principal: '*'
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+            Resource:
+              - !Sub '${TelemetryBucket.Arn}/latest_metrics.json'
+              - !Sub '${TelemetryBucket.Arn}/predictions/*'
+            Condition:
+              ArnEquals:
+                aws:PrincipalArn: !GetAtt PredictiveMaintenanceFunctionRole.Arn
+          - Sid: ListTelemetryBucketFromFunctionRoleOnly
+            Effect: Allow
+            Principal: '*'
+            Action: s3:ListBucket
+            Resource: !GetAtt TelemetryBucket.Arn
+            Condition:
+              ArnEquals:
+                aws:PrincipalArn: !GetAtt PredictiveMaintenanceFunctionRole.Arn
+
+  SnsInterfaceEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      VpcId: !Ref PrivateVpc
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.sns
+      SubnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+      SecurityGroupIds:
+        - !Ref EndpointSecurityGroup
+      PrivateDnsEnabled: true
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PublishAlertsFromFunctionRoleOnly
+            Effect: Allow
+            Principal: '*'
+            Action: sns:Publish
+            Resource: !Ref AlertTopic
+            Condition:
+              ArnEquals:
+                aws:PrincipalArn: !GetAtt PredictiveMaintenanceFunctionRole.Arn
+
   TelemetryKey:
     Type: AWS::KMS::Key
     Properties:
@@ -96,10 +281,21 @@ Resources:
               - Sid: WriteFunctionLogs
                 Effect: Allow
                 Action:
-                  - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
-                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*
+                Resource: !GetAtt FunctionLogGroup.Arn
+              # The AWS managed AWSLambdaVPCAccessExecutionRole policy also grants logs access on
+              # '*', so the ENI actions are listed here instead. These EC2 actions do not support
+              # resource-level scoping for Lambda's use, hence Resource '*'.
+              - Sid: ManageVpcNetworkInterfaces
+                Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DeleteNetworkInterface
+                  - ec2:AssignPrivateIpAddresses
+                  - ec2:UnassignPrivateIpAddresses
+                Resource: '*'
               - Sid: ReadInputAndWritePredictions
                 Effect: Allow
                 Action:
@@ -127,12 +323,33 @@ Resources:
                   - sns:Publish
                 Resource: !Ref AlertTopic
 
+  FunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-predictive-maintenance
+      RetentionInDays: 14
+
   PredictiveMaintenanceFunction:
     Type: AWS::Serverless::Function
+    # Don't let the schedule fire before the private network path is complete.
+    DependsOn:
+      - FunctionLogGroup
+      - S3GatewayEndpoint
+      - SnsInterfaceEndpoint
+      - EndpointIngressFromLambda
+      - LambdaEgressToEndpoints
+      - LambdaEgressToS3
     Properties:
+      FunctionName: !Sub ${AWS::StackName}-predictive-maintenance
       CodeUri: function/
       Handler: src.lambda_function.handler
       Role: !GetAtt PredictiveMaintenanceFunctionRole.Arn
+      VpcConfig:
+        SubnetIds:
+          - !Ref PrivateSubnetA
+          - !Ref PrivateSubnetB
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
       Environment:
         Variables:
           DATA_BUCKET: !Ref TelemetryBucket
@@ -263,3 +480,9 @@ Outputs:
   KmsKeyArn:
     Description: Customer-managed encryption key ARN
     Value: !GetAtt TelemetryKey.Arn
+  LambdaSecurityGroupId:
+    Description: Lambda security group (evidence for SG chaining)
+    Value: !Ref LambdaSecurityGroup
+  EndpointSecurityGroupId:
+    Description: Interface endpoint security group; inbound 443 references the Lambda security group
+    Value: !Ref EndpointSecurityGroup

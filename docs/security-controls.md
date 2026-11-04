@@ -21,6 +21,6 @@ Use this mapping as a starting point. Verify exact control identifiers and wordi
 - AWS Config recorder and selected managed rules enabled and evaluated.
 - CloudWatch Logs show successful and elevated-risk runs.
 - SNS subscription confirmed; test notification received.
-- Network controls documented. For baseline no-VPC Lambda, explain why SG chaining does not apply. If a VPC variant is implemented, capture the Lambda SG, endpoint/application SG, inbound reference, routes, and endpoint policy.
+- Network controls documented: capture the Lambda SG (egress to the endpoint SG and S3 prefix list only), the endpoint SG (inbound 443 whose source is the Lambda SG), the private route table (S3 gateway route, no `0.0.0.0/0`), and the endpoint policies.
 - Negative tests demonstrate missing or invalid features fail safely.
 - No secrets, account identifiers, sensitive telemetry, or private screenshots committed to the public repository.
