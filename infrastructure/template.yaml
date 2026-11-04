@@ -283,7 +283,7 @@ Resources:
                 Action:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
-                Resource: !GetAtt FunctionLogGroup.Arn
+                Resource: !Sub '${FunctionLogGroup.Arn}:*'
               # The AWS managed AWSLambdaVPCAccessExecutionRole policy also grants logs access on
               # '*', so the ENI actions are listed here instead. These EC2 actions do not support
               # resource-level scoping for Lambda's use, hence Resource '*'.
@@ -295,6 +295,8 @@ Resources:
                   - ec2:DeleteNetworkInterface
                   - ec2:AssignPrivateIpAddresses
                   - ec2:UnassignPrivateIpAddresses
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeSecurityGroups
                 Resource: '*'
               - Sid: ReadInputAndWritePredictions
                 Effect: Allow
