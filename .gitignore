@@ -1,2 +1,6 @@
-# ignore venv
+# Local build and test artifacts
 .venv/
+.aws-sam/
+__pycache__/
+*.py[cod]
+.pytest_cache/
