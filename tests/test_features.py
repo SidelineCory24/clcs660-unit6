@@ -1,6 +1,8 @@
+"""Tests for feature validation: ordering, required fields, ranges, and non-finite values."""
 import unittest
 from src.features import validate_features
 
+# A fully valid record; tests copy it and break one field at a time.
 VALID = {
     "cpu_mean": 88, "cpu_trend": 8, "memory_mean": 91,
     "error_rate": 0.07, "latency_p95_ms": 1800, "restart_count": 3,
@@ -8,6 +10,8 @@ VALID = {
 
 
 class FeatureValidationTests(unittest.TestCase):
+    """Valid input is ordered consistently; bad input raises ValueError."""
+
     def test_valid_features_keep_stable_order(self):
         values = validate_features(VALID)
         self.assertEqual(len(values), 6)
